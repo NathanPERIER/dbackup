@@ -1,0 +1,8 @@
+
+# Temporary files
+*.tmp
+*.swp
+*.bak
+
+# Python
+__pycache__
