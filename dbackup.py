@@ -86,15 +86,12 @@ class PostgresExecutor(BackupExecutor):
         ], check=True, encoding='utf-8', stdout=subprocess.PIPE)
         return proc.stdout.split()
 
-    def backup_database(self, db_name: str, output_dir: str):
-        # TODO: make something more generic
-        # TODO: chmod 600
+    def backup_database(self, db_name: str, output_dir: str, format: str, extension: str):
+        dump_path = os.path.join(output_dir, f"{db_name}.{extension}")
         subprocess.run([
-            'pg_dump', '--format=p', '-U', self._user, '-h', self._socket, '-f', os.path.join(output_dir, f"{db_name}.dump"), db_name 
+            'pg_dump', f"--format={format}", '-U', self._user, '-h', self._socket, '-f', dump_path, db_name
         ], check=True)
-        subprocess.run([
-            'pg_dump', '--format=c', '-U', self._user, '-h', self._socket, '-f', os.path.join(output_dir, f"{db_name}.pg_dump"), db_name 
-        ], check=True)
+        os.chmod(dump_path, 0o600)
 
     def backup(self, output_dir: str):
         processor_out_dir = os.path.join(output_dir, self._name)
@@ -102,7 +99,8 @@ class PostgresExecutor(BackupExecutor):
             os.mkdir(processor_out_dir)
         for db_name in self.get_databases():
             logger.info("Creating backup for database %s in %s", db_name, self._name)
-            self.backup_database(db_name, processor_out_dir)
+            self.backup_database(db_name, processor_out_dir, 'p', 'dump')
+            self.backup_database(db_name, processor_out_dir, 'c', 'pg_dump')
 
 
 def load_conf(path: str) -> list[BackupExecutor] :
