@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 
+import re
 import os
 import sys
 import errno
@@ -14,6 +15,7 @@ import yaml
 logger = logging.getLogger(__name__)
 
 pgpass_file = '/tmp/dbackup.pgpass'
+name_reg = re.compile(r'[a-zA-Z0-9_-]+')
 
 
 def help(ret_code: int):
@@ -58,8 +60,9 @@ class BackupExecutor(ABC):
     def __init__(self, name: str, conf: dict[str,Any]):
         self._name: str = name
         # TODO: support host+port
-        # TODO: check that socket exists
         self._socket: str = conf['socket']
+        if not os.path.exists(self._socket):
+            raise FileNotFoundError(f"Socket does not exist: {self._socket}")
         self._user: str = conf['user']
         self._password: str = conf['password']
     
@@ -104,10 +107,11 @@ class PostgresExecutor(BackupExecutor):
 
 
 def load_conf(path: str) -> list[BackupExecutor] :
-    data = load_yaml(path)
+    data: dict[str,Any] = load_yaml(path)
     res: list[BackupExecutor] = []
     for name, conf in data.items():
-        # TODO: check name format
+        if not name_reg.fullmatch(name):
+            raise ValueError(f"Bad backup name: {name}")
         db_type = conf['type']
         if db_type == 'postgresql' :
             res.append(PostgresExecutor(name, conf))
