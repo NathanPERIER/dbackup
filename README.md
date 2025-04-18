@@ -38,3 +38,26 @@ services:
       - /path/to/postgresql_socket:/sockets/postgres/sql.sock
       - /path/to/mariadb_socket:/sockets/maria/sql.sock
 ```
+
+> [!WARNING]
+> If the script in the container is executed by a non-root user, make sure that the directory mapped to `/output` is already created and writable for this user.
+
+
+## Configuration
+
+```yaml
+backup1:
+    type: postgresql
+    socket: /sockets/postgres/sql.sock
+    user: backup
+    password: pass1
+
+backup2:
+    type: maria
+    socket: /sockets/maria/sql.sock
+    user: backup
+    password: pass2
+```
+
+> [!NOTE]
+> Only UNIX socket connection is currently supported.
