@@ -70,8 +70,20 @@ class BackupExecutor(ABC):
         return self._name
 
     @abstractmethod
-    def backup(self, output_dir: str):
+    def get_databases(self) -> list[str] :
         pass
+
+    @abstractmethod
+    def backup_database(self, db_name: str, output_dir: str):
+        pass
+
+    def backup(self, output_dir: str):
+        processor_out_dir = os.path.join(output_dir, self._name)
+        if not os.path.exists(processor_out_dir):
+            os.mkdir(processor_out_dir, mode=0o700)
+        for db_name in self.get_databases():
+            logger.info("Creating backup for database %s in %s", db_name, self._name)
+            self.backup_database(db_name, processor_out_dir)
 
 
 class PostgresExecutor(BackupExecutor):
@@ -89,21 +101,16 @@ class PostgresExecutor(BackupExecutor):
         ], check=True, encoding='utf-8', stdout=subprocess.PIPE)
         return proc.stdout.split()
 
-    def backup_database(self, db_name: str, output_dir: str, format: str, extension: str):
+    def backup_database_impl(self, db_name: str, output_dir: str, format: str, extension: str):
         dump_path = os.path.join(output_dir, f"{db_name}.{extension}")
         subprocess.run([
             'pg_dump', f"--format={format}", '-U', self._user, '-h', self._socket, '-f', dump_path, db_name
         ], check=True)
         os.chmod(dump_path, 0o600)
 
-    def backup(self, output_dir: str):
-        processor_out_dir = os.path.join(output_dir, self._name)
-        if not os.path.exists(processor_out_dir):
-            os.mkdir(processor_out_dir)
-        for db_name in self.get_databases():
-            logger.info("Creating backup for database %s in %s", db_name, self._name)
-            self.backup_database(db_name, processor_out_dir, 'p', 'dump')
-            self.backup_database(db_name, processor_out_dir, 'c', 'pg_dump')
+    def backup_database(self, db_name: str, output_dir: str):
+        self.backup_database_impl(db_name, output_dir, 'p', 'dump')
+        self.backup_database_impl(db_name, output_dir, 'c', 'pg_dump')
 
 
 class MariaExecutor(BackupExecutor):
@@ -128,14 +135,6 @@ class MariaExecutor(BackupExecutor):
         with open(dump_path, 'w') as f:
             f.write(proc.stdout)
         os.chmod(dump_path, 0o600)
-
-    def backup(self, output_dir: str):
-        processor_out_dir = os.path.join(output_dir, self._name)
-        if not os.path.exists(processor_out_dir):
-            os.mkdir(processor_out_dir)
-        for db_name in self.get_databases():
-            logger.info("Creating backup for database %s in %s", db_name, self._name)
-            self.backup_database(db_name, processor_out_dir)
 
 
 def load_conf(path: str) -> list[BackupExecutor] :
