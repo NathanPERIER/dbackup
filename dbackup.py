@@ -106,6 +106,38 @@ class PostgresExecutor(BackupExecutor):
             self.backup_database(db_name, processor_out_dir, 'c', 'pg_dump')
 
 
+class MariaExecutor(BackupExecutor):
+
+    def __init__(self, name: str, conf: dict[str,Any]):
+        super().__init__(name, conf)
+        self._maria_defaults: Final[str] = f"[client]\nprotocol=socket\nsocket={self._socket}\nuser={self._user}\npassword={self._password}"
+    
+    db_list_query = """SHOW DATABASES WHERE `Database` NOT IN ('mysql', 'performance_schema', 'information_schema', 'sys');"""
+    def get_databases(self) -> list[str] :
+        # mariadb-dump --defaults-file="$conf_file" "$1" > "$output_dir/$1.dump" 
+        proc = subprocess.run([
+            'mariadb', '--defaults-file=/dev/stdin', '--silent', '--skip-column-names', '-e', MariaExecutor.db_list_query
+        ], check=True, input=self._maria_defaults, encoding='utf-8', stdout=subprocess.PIPE)
+        return proc.stdout.split()
+
+    def backup_database(self, db_name: str, output_dir: str):
+        dump_path = os.path.join(output_dir, f"{db_name}.dump")
+        proc = subprocess.run([
+            'mariadb-dump', '--defaults-file=/dev/stdin', db_name
+        ], check=True, input=self._maria_defaults, encoding='utf-8', stdout=subprocess.PIPE)
+        with open(dump_path, 'w') as f:
+            f.write(proc.stdout)
+        os.chmod(dump_path, 0o600)
+
+    def backup(self, output_dir: str):
+        processor_out_dir = os.path.join(output_dir, self._name)
+        if not os.path.exists(processor_out_dir):
+            os.mkdir(processor_out_dir)
+        for db_name in self.get_databases():
+            logger.info("Creating backup for database %s in %s", db_name, self._name)
+            self.backup_database(db_name, processor_out_dir)
+
+
 def load_conf(path: str) -> list[BackupExecutor] :
     data: dict[str,Any] = load_yaml(path)
     res: list[BackupExecutor] = []
@@ -115,8 +147,10 @@ def load_conf(path: str) -> list[BackupExecutor] :
         db_type = conf['type']
         if db_type == 'postgresql' :
             res.append(PostgresExecutor(name, conf))
-        # TODO: mariadb version
-        # TODO: error if type is not correct
+        elif db_type == 'mariadb' :
+            res.append(MariaExecutor(name, conf))
+        else:
+            raise ValueError(f"Bad database type: {db_type}")
     return res
 
 
