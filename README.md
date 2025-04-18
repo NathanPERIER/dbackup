@@ -19,8 +19,8 @@ docker build . -t dbackup
 docker run --rm \
     -v './dbackup.yaml:/etc/dbackup/dbackup.yaml:ro' \
     -v './output:/output' \
-    -v '/path/to/postgresql_socket:/sockets/postgres/sql.sock' \
-    -v '/path/to/mariadb_socket:/sockets/maria/sql.sock' \
+    -v '/path/to/postgresql_socket_dir:/sockets/postgres' \
+    -v '/path/to/mariadb_socket_dir:/sockets/maria' \
     dbackup
 ```
 
@@ -35,8 +35,8 @@ services:
     volumes:
       - /path/to/dbackup.yaml:/etc/dbackup/dbackup.yaml:ro
       - /path/to/output:/output
-      - /path/to/postgresql_socket:/sockets/postgres/sql.sock
-      - /path/to/mariadb_socket:/sockets/maria/sql.sock
+      - /path/to/postgresql_socket_dir:/sockets/postgres
+      - /path/to/mariadb_socket_dir:/sockets/maria
 ```
 
 > [!WARNING]
@@ -48,13 +48,13 @@ services:
 ```yaml
 backup1:
     type: postgresql
-    socket: /sockets/postgres/sql.sock
+    socket: /sockets/postgres
     user: backup
     password: pass1
 
 backup2:
     type: maria
-    socket: /sockets/maria/sql.sock
+    socket: /sockets/maria/mariadb.sock
     user: backup
     password: pass2
 ```
