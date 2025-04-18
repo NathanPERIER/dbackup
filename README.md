@@ -39,6 +39,10 @@ services:
       - /path/to/mariadb_socket_dir:/sockets/maria
 ```
 
+```bash
+docker compose run --rm dbackup
+```
+
 > [!WARNING]
 > If the script in the container is executed by a non-root user, make sure that the directory mapped to `/output` is already created and writable for this user.
 
