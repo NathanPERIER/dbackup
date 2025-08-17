@@ -4,6 +4,7 @@ import re
 import os
 import sys
 import errno
+import shutil
 import logging
 import traceback
 import subprocess
@@ -77,10 +78,14 @@ class BackupExecutor(ABC):
     def backup_database(self, db_name: str, output_dir: str):
         pass
 
+    def full_backup(self, output_dir: str):
+        logger.debug('Full backup is not enabled for this executor')
+
     def backup(self, output_dir: str):
         processor_out_dir = os.path.join(output_dir, self._name)
         if not os.path.exists(processor_out_dir):
             os.mkdir(processor_out_dir, mode=0o700)
+        self.full_backup(processor_out_dir)
         for db_name in self.get_databases():
             logger.info("Creating backup for database %s in %s", db_name, self._name)
             self.backup_database(db_name, processor_out_dir)
@@ -100,6 +105,32 @@ class PostgresExecutor(BackupExecutor):
             'psql', '--csv', '-t', '-U', self._user, '-d', 'postgres', '-h', self._socket, '-c', PostgresExecutor.db_list_query
         ], check=True, encoding='utf-8', stdout=subprocess.PIPE)
         return proc.stdout.split()
+
+    repl_perm_query = 'SELECT COUNT(*) FROM pg_user WHERE usename = CURRENT_USER AND userepl = \'t\';'
+    def can_basebackup(self) -> bool :
+        try:
+            proc = subprocess.run([
+                'psql', '--csv', '-t', '-U', self._user, '-d', 'postgres', '-h', self._socket, '-c', PostgresExecutor.repl_perm_query
+            ], check=True, encoding='utf-8', stdout=subprocess.PIPE)
+            return (proc.stdout.strip() == '1')
+        except:
+            logger.error("Error while checking replication permission")
+            traceback.print_exc()
+        return False
+
+    def full_backup(self, output_dir: str):
+        if not self.can_basebackup():
+            logger.warning("Unable to perform a basebackup for %s", self._name)
+            logger.info("Does the user %s have the correct permissions?", self._user)
+            logger.info("(consider `ALTER USER %s REPLICATION;`)", self._user)
+            return
+        logger.info("Creating basebackup for %s", self._name)
+        basebackup_dir = os.path.join(output_dir, 'basebackup')
+        if os.path.exists(basebackup_dir):
+            shutil.rmtree(basebackup_dir)
+        subprocess.run([
+            'pg_basebackup', '-D', basebackup_dir, '--format=t', '-z', '-U', self._user, '-h', self._socket
+        ], check=True)
 
     def backup_database_impl(self, db_name: str, output_dir: str, format: str, extension: str):
         dump_path = os.path.join(output_dir, f"{db_name}.{extension}")
