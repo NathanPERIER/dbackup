@@ -13,6 +13,7 @@ from typing import Any, Final
 
 import yaml
 
+logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 pgpass_file = '/tmp/dbackup.pgpass'
