@@ -13,6 +13,6 @@ RUN --mount=type=bind,source=./requirements.txt,dst=/tmp/install/requirements.tx
 
 WORKDIR /opt/dbackup
 
-COPY dbackup.py ./
+COPY *.py ./
 
 ENTRYPOINT ["python3", "./dbackup.py"]

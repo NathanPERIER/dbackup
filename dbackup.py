@@ -9,9 +9,12 @@ import logging
 import traceback
 import subprocess
 from abc import ABC, abstractmethod
+from time import time
 from typing import Any, Final
 
 import yaml
+
+from metrics import MetricLabel, MetricSection
 
 logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -32,6 +35,25 @@ def load_yaml(path: str):
 def make_empty_safe(path: str):
     open(path, 'w').close()
     os.chmod(path, 0o600)
+
+
+backup_name_label = MetricLabel('backup_name')
+database_name_label = MetricLabel('database_name')
+
+class Metrics:
+    def __init__(self, prefix: str):
+        self._prefix: Final[str] = prefix
+        self._last_backup_timestamp = MetricSection('last_run_timestamp_seconds', 'counter', 'Timestamp of the last script invocation')
+        self._last_backup_timestamp.add([], time())
+        self.db_backup_ok = MetricSection('database_backup_ok_bool', 'gauge', 'Value is 1 if the database backup was successful, else 0')
+        self.full_backup_ok = MetricSection('full_backup_ok_bool', 'gauge', 'Value is 1 if the full backup was successful, else 0')
+
+    def dump(self) -> list[str] :
+        res: list[str] = []
+        self._last_backup_timestamp.write(self._prefix, res)
+        self.db_backup_ok.write(self._prefix, res)
+        self.full_backup_ok.write(self._prefix, res)
+        return res
 
 
 class PgpassFile:
@@ -79,25 +101,35 @@ class BackupExecutor(ABC):
     def backup_database(self, db_name: str, output_dir: str):
         pass
 
-    def full_backup(self, output_dir: str):
-        logger.debug('Full backup is not enabled for this executor')
+    def should_full_backup(self) -> bool :
+        return False
 
-    def backup(self, output_dir: str):
+    def full_backup(self, output_dir: str):
+        raise RuntimeError('Full backup is not enabled for this executor')
+
+    def backup(self, output_dir: str, metrics: Metrics):
         processor_out_dir = os.path.join(output_dir, self._name)
         if not os.path.exists(processor_out_dir):
             os.mkdir(processor_out_dir, mode=0o700)
-        try:
-            self.full_backup(processor_out_dir)
-        except (Exception, subprocess.SubprocessError) as e :
-            logger.error("Error while generating full backup in %s: %s", self._name, e)
-            traceback.print_exc()
+        labels = [backup_name_label(self._name)]
+        if self.should_full_backup() :
+            try:
+                self.full_backup(processor_out_dir)
+                metrics.full_backup_ok.add(labels, 1)
+            except (Exception, subprocess.SubprocessError) as e :
+                logger.error("Error while generating full backup in %s: %s", self._name, e)
+                traceback.print_exc()
+                metrics.full_backup_ok.add(labels, 0)
         for db_name in self.get_databases():
+            db_labels = [*labels, database_name_label(db_name)]
             logger.info("Creating backup for database %s in %s", db_name, self._name)
             try:
                 self.backup_database(db_name, processor_out_dir)
+                metrics.db_backup_ok.add(db_labels, 1)
             except (Exception, subprocess.SubprocessError) as e:
                 logger.error("Error while generating backup for database %s in %s: %s", db_name, self._name, e)
                 traceback.print_exc()
+                metrics.db_backup_ok.add(db_labels, 0)
 
 
 class PostgresExecutor(BackupExecutor):
@@ -127,12 +159,15 @@ class PostgresExecutor(BackupExecutor):
             traceback.print_exc()
         return False
 
+    def should_full_backup(self) -> bool :
+        return True
+
     def full_backup(self, output_dir: str):
         if not self.can_basebackup():
             logger.warning("Unable to perform a basebackup for %s", self._name)
             logger.info("Does the user %s have the correct permissions?", self._user)
             logger.info("(consider `ALTER USER %s REPLICATION;`)", self._user)
-            return
+            raise RuntimeError('User does not have the ability to create a basebackup')
         logger.info("Creating basebackup for %s", self._name)
         basebackup_dir = os.path.join(output_dir, 'basebackup')
         if os.path.exists(basebackup_dir):
@@ -234,6 +269,8 @@ def main():
         sys.exit(1)
 
 
+    metrics = Metrics('dbackup')
+
     with PgpassFile(pgpass_file) :
         os.environ['PGPASSFILE'] = pgpass_file
         try:
@@ -245,10 +282,13 @@ def main():
         for executor in config :
             logger.info("Processing %s", executor.name())
             try:
-                executor.backup(output_dir)
+                executor.backup(output_dir, metrics)
             except Exception:
                 logger.error("Unexpected error while processing backups for %s", executor.name())
                 traceback.print_exc()
+
+    for line in metrics.dump() :
+        print(line)
 
 if __name__ == '__main__':
     main()
