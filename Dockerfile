@@ -9,10 +9,10 @@ RUN --mount=type=bind,source=./requirements.txt,dst=/tmp/install/requirements.tx
     apk update \
  && apk add --no-cache mariadb-client postgresql${POSTGRES_VERSION}-client \
  && pip3 install -r /tmp/install/requirements.txt --break-system-packages \
- && mkdir -p /opt/dbackup
+ && mkdir -p /opt/dbackup /metrics
 
 WORKDIR /opt/dbackup
 
 COPY *.py ./
 
-ENTRYPOINT ["python3", "./dbackup.py"]
+ENTRYPOINT ["python3", "./dbackup.py", "--metrics", "--metrics-dir", "/metrics"]

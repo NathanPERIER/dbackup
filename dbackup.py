@@ -24,7 +24,7 @@ name_reg = re.compile(r'[a-zA-Z0-9_-]+')
 
 
 def help(ret_code: int):
-    print(f"usage: {sys.argv[0]} [-c <config_path>] [-o <output_dir>]")
+    print(f"usage: {sys.argv[0]} [-c <config_path>] [-o <output_dir>] [--metrics] [--metrics-dir <path>]")
     sys.exit(ret_code)
 
 
@@ -267,6 +267,8 @@ def load_conf(path: str) -> list[BackupExecutor] :
 def main():
     config_path: str = ''
     output_dir: str = ''
+    write_metrics = False
+    metrics_dir = '/var/lib/node_exporter/textfile_collector'
 
     args = sys.argv[1:]
 
@@ -284,7 +286,17 @@ def main():
             help(1)
         output_dir = args[1]
         args = args[2:]
-    
+
+    if len(args) > 0 and args[0] == '--metrics' :
+        write_metrics = True
+        args = args[1:]
+
+    if len(args) > 0 and args[0] == '--metrics-dir' :
+        if len(args) < 2 :
+            help(1)
+        metrics_dir = args[1]
+        args = args[2:]
+
     if len(args) > 0 :
         help(1)
 
@@ -323,8 +335,17 @@ def main():
                 logger.error("Unexpected error while processing backups for %s", executor.name())
                 traceback.print_exc()
 
-    for line in metrics.dump() :
-        print(line)
+    if write_metrics:
+        metrics_file = os.path.join(metrics_dir, 'dbackup.prom')
+        metrics_tmp_file = f"{metrics_file}.tmp"
+        try:
+            with open(metrics_tmp_file, 'w') as f:
+                f.write("\n".join(metrics.dump()))
+            # Atomic write
+            os.rename(metrics_tmp_file, metrics_file)
+        except Exception:
+            logger.error("Error while writing metrics")
+            traceback.print_exc()
 
 if __name__ == '__main__':
     main()
