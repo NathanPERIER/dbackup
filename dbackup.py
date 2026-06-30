@@ -86,10 +86,18 @@ class BackupExecutor(ABC):
         processor_out_dir = os.path.join(output_dir, self._name)
         if not os.path.exists(processor_out_dir):
             os.mkdir(processor_out_dir, mode=0o700)
-        self.full_backup(processor_out_dir)
+        try:
+            self.full_backup(processor_out_dir)
+        except (Exception, subprocess.SubprocessError) as e :
+            logger.error("Error while generating full backup in %s: %s", self._name, e)
+            traceback.print_exc()
         for db_name in self.get_databases():
             logger.info("Creating backup for database %s in %s", db_name, self._name)
-            self.backup_database(db_name, processor_out_dir)
+            try:
+                self.backup_database(db_name, processor_out_dir)
+            except (Exception, subprocess.SubprocessError) as e:
+                logger.error("Error while generating backup for database %s in %s: %s", db_name, self._name, e)
+                traceback.print_exc()
 
 
 class PostgresExecutor(BackupExecutor):
@@ -238,8 +246,8 @@ def main():
             logger.info("Processing %s", executor.name())
             try:
                 executor.backup(output_dir)
-            except (Exception, subprocess.SubprocessError):
-                logger.error("Error while processing backups for %s", executor.name())
+            except Exception:
+                logger.error("Unexpected error while processing backups for %s", executor.name())
                 traceback.print_exc()
 
 if __name__ == '__main__':
