@@ -10,7 +10,7 @@ import traceback
 import subprocess
 from abc import ABC, abstractmethod
 from time import time
-from typing import Any, Final
+from typing import Any, Final, Optional
 
 import yaml
 
@@ -36,6 +36,27 @@ def make_empty_safe(path: str):
     open(path, 'w').close()
     os.chmod(path, 0o600)
 
+def file_size(path: str) -> Optional[int] :
+    try:
+        return os.path.getsize(path)
+    except Exception as e:
+        logger.warning("Unable to retrieve size for file at \"%s\": %s", e)
+        return None
+
+def dir_size(path: str) -> Optional[int] :
+    # Warning: this is not recursive !
+    res = 0
+    try:
+        for f in os.listdir(path) :
+            full_path = os.path.join(path, f)
+            if os.path.isfile(full_path) :
+                res += os.path.getsize(full_path)
+    except Exception as e:
+        logger.warning("Unable to retrieve size for some file in \"%s\": %s", e)
+        return None
+    return res
+
+
 
 backup_name_label = MetricLabel('backup_name')
 database_name_label = MetricLabel('database_name')
@@ -46,13 +67,17 @@ class Metrics:
         self._last_backup_timestamp = MetricSection('last_run_timestamp_seconds', 'counter', 'Timestamp of the last script invocation')
         self._last_backup_timestamp.add([], time())
         self.db_backup_ok = MetricSection('database_backup_ok_bool', 'gauge', 'Value is 1 if the database backup was successful, else 0')
+        self.db_backup_size = MetricSection('database_backup_size_bytes', 'gauge', 'Size of a database backup on disk')
         self.full_backup_ok = MetricSection('full_backup_ok_bool', 'gauge', 'Value is 1 if the full backup was successful, else 0')
+        self.full_backup_size = MetricSection('full_backup_size_bytes', 'gauge', 'Size of a full backup on disk')
 
     def dump(self) -> list[str] :
         res: list[str] = []
         self._last_backup_timestamp.write(self._prefix, res)
         self.db_backup_ok.write(self._prefix, res)
+        self.db_backup_size.write(self._prefix, res)
         self.full_backup_ok.write(self._prefix, res)
+        self.full_backup_size.write(self._prefix, res)
         return res
 
 
@@ -98,13 +123,13 @@ class BackupExecutor(ABC):
         pass
 
     @abstractmethod
-    def backup_database(self, db_name: str, output_dir: str):
+    def backup_database(self, db_name: str, output_dir: str) -> Optional[int] :
         pass
 
     def should_full_backup(self) -> bool :
         return False
 
-    def full_backup(self, output_dir: str):
+    def full_backup(self, output_dir: str) -> Optional[int] :
         raise RuntimeError('Full backup is not enabled for this executor')
 
     def backup(self, output_dir: str, metrics: Metrics):
@@ -114,8 +139,10 @@ class BackupExecutor(ABC):
         labels = [backup_name_label(self._name)]
         if self.should_full_backup() :
             try:
-                self.full_backup(processor_out_dir)
+                dump_size = self.full_backup(processor_out_dir)
                 metrics.full_backup_ok.add(labels, 1)
+                if dump_size is not None :
+                    metrics.full_backup_size.add(labels, dump_size)
             except (Exception, subprocess.SubprocessError) as e :
                 logger.error("Error while generating full backup in %s: %s", self._name, e)
                 traceback.print_exc()
@@ -124,8 +151,10 @@ class BackupExecutor(ABC):
             db_labels = [*labels, database_name_label(db_name)]
             logger.info("Creating backup for database %s in %s", db_name, self._name)
             try:
-                self.backup_database(db_name, processor_out_dir)
+                dump_size = self.backup_database(db_name, processor_out_dir)
                 metrics.db_backup_ok.add(db_labels, 1)
+                if dump_size is not None :
+                    metrics.db_backup_size.add(db_labels, dump_size)
             except (Exception, subprocess.SubprocessError) as e:
                 logger.error("Error while generating backup for database %s in %s: %s", db_name, self._name, e)
                 traceback.print_exc()
@@ -162,7 +191,7 @@ class PostgresExecutor(BackupExecutor):
     def should_full_backup(self) -> bool :
         return True
 
-    def full_backup(self, output_dir: str):
+    def full_backup(self, output_dir: str) -> Optional[int] :
         if not self.can_basebackup():
             logger.warning("Unable to perform a basebackup for %s", self._name)
             logger.info("Does the user %s have the correct permissions?", self._user)
@@ -175,17 +204,23 @@ class PostgresExecutor(BackupExecutor):
         subprocess.run([
             'pg_basebackup', '-D', basebackup_dir, '--format=t', '-z', '-U', self._user, '-h', self._socket
         ], check=True)
+        os.chmod(basebackup_dir, 0o700)
+        return dir_size(basebackup_dir)
 
-    def backup_database_impl(self, db_name: str, output_dir: str, format: str, extension: str):
+    def backup_database_impl(self, db_name: str, output_dir: str, format: str, extension: str) -> Optional[int] :
         dump_path = os.path.join(output_dir, f"{db_name}.{extension}")
         subprocess.run([
             'pg_dump', f"--format={format}", '-U', self._user, '-h', self._socket, '-f', dump_path, db_name
         ], check=True)
         os.chmod(dump_path, 0o600)
+        return file_size(dump_path)
 
-    def backup_database(self, db_name: str, output_dir: str):
-        self.backup_database_impl(db_name, output_dir, 'p', 'dump')
-        self.backup_database_impl(db_name, output_dir, 'c', 'pg_dump')
+    def backup_database(self, db_name: str, output_dir: str) -> Optional[int] :
+        size_p = self.backup_database_impl(db_name, output_dir, 'p', 'dump')
+        size_c = self.backup_database_impl(db_name, output_dir, 'c', 'pg_dump')
+        if size_p is None or size_c is None :
+            return None
+        return size_p + size_c
 
 
 class MariaExecutor(BackupExecutor):
@@ -202,7 +237,7 @@ class MariaExecutor(BackupExecutor):
         ], check=True, input=self._maria_defaults, encoding='utf-8', stdout=subprocess.PIPE)
         return proc.stdout.split()
 
-    def backup_database(self, db_name: str, output_dir: str):
+    def backup_database(self, db_name: str, output_dir: str) -> Optional[int] :
         dump_path = os.path.join(output_dir, f"{db_name}.dump")
         proc = subprocess.run([
             'mariadb-dump', '--defaults-file=/dev/stdin', db_name
@@ -210,6 +245,7 @@ class MariaExecutor(BackupExecutor):
         with open(dump_path, 'w') as f:
             f.write(proc.stdout)
         os.chmod(dump_path, 0o600)
+        return file_size(dump_path)
 
 
 def load_conf(path: str) -> list[BackupExecutor] :
