@@ -8,7 +8,7 @@ This is a simple script designed to backup databases.
 ### Build
 
 ```bash
-docker build . -t dbackup
+make docker
 ```
 
 ### Run
