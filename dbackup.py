@@ -71,14 +71,15 @@ class Metrics:
         self.full_backup_ok = MetricSection('full_backup_ok_bool', 'gauge', 'Value is 1 if the full backup was successful, else 0')
         self.full_backup_size = MetricSection('full_backup_size_bytes', 'gauge', 'Size of a full backup on disk')
 
-    def dump(self) -> list[str] :
+    def dump(self) -> str :
         res: list[str] = []
         self._last_backup_timestamp.write(self._prefix, res)
         self.db_backup_ok.write(self._prefix, res)
         self.db_backup_size.write(self._prefix, res)
         self.full_backup_ok.write(self._prefix, res)
         self.full_backup_size.write(self._prefix, res)
-        return res
+        res.append('')
+        return "\n".join(res)
 
 
 class PgpassFile:
@@ -340,7 +341,7 @@ def main():
         metrics_tmp_file = f"{metrics_file}.tmp"
         try:
             with open(metrics_tmp_file, 'w') as f:
-                f.write("\n".join(metrics.dump()))
+                f.write(metrics.dump())
             # Atomic write
             os.rename(metrics_tmp_file, metrics_file)
         except Exception:
